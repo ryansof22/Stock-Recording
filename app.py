@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import database as db
+import io
 
 # Konfigurasi Halaman Streamlit
 st.set_page_config(
@@ -24,13 +25,11 @@ menu = st.sidebar.radio("Navigasi Menu", ["📝 Form Transaksi Stok", "📊 Dash
 if menu == "📝 Form Transaksi Stok":
     st.subheader("Pencatatan Mutasi Barang")
     
-    # Ambil data master barang untuk dropdown
     df_barang = db.get_master_barang()
     
     if df_barang.empty:
         st.warning("Belum ada data barang di sistem. Silakan tambah barang di menu 'Tambah Master Barang' terlebih dahulu.")
     else:
-        # Topbar Switch Toggle Mode
         col_title, col_switch = st.columns([3, 1])
         with col_switch:
             mode_transaksi = st.radio("Tipe Transaksi:", ["🟢 BARANG MASUK", "🔴 BARANG KELUAR"], horizontal=True)
@@ -41,7 +40,6 @@ if menu == "📝 Form Transaksi Stok":
         st.write(f"### Form Opsi: **{mode_transaksi}**")
         
         with st.form("form_mutasi"):
-            # Format Pilihan Dropdown: Kode - Nama (Ukuran)
             opsi_barang = df_barang.apply(lambda x: f"{x['kode_barang']} - {x['nama_barang']} ({x['ukuran']}) | Stok: {x['stok_sekarang']}", axis=1)
             pilihan = st.selectbox("Pilih Atribut Barang", opsi_barang)
             
@@ -51,7 +49,7 @@ if menu == "📝 Form Transaksi Stok":
             with col1:
                 jumlah = st.number_input("Jumlah (Qty)", min_value=1, step=1)
             with col2:
-                label_penerima = "Nama Suplier / Vendor" if tipe == "MASUK" else "Penerima / Mahasiswa / Angkatan"
+                label_penerima = "Nama Suplier / Vendor Pengirim" if tipe == "MASUK" else "Penerima / Mahasiswa / Angkatan"
                 penerima = st.text_input(label_penerima)
                 
             keterangan = st.text_area("Keterangan Tambahan", placeholder="Contoh: Pengadaan Gelombang 1 / Rusak / Tukar Ukuran")
@@ -64,7 +62,7 @@ if menu == "📝 Form Transaksi Stok":
                 st.rerun()
 
 # ==========================================
-# MENU 2: DASHBOARD DATA STOK (READ-ONLY)
+# MENU 2: DASHBOARD DATA STOK & RIWAYAT (UPDATED)
 # ==========================================
 elif menu == "📊 Dashboard Data Stok":
     st.subheader("Ketersediaan Stok Atribut Real-Time")
@@ -83,12 +81,15 @@ elif menu == "📊 Dashboard Data Stok":
         
         st.markdown("---")
         
-        # Filter Kategori
-        kategori_list = ["Semua"] + list(df_stok['kategori'].unique())
-        kat_pilihan = st.selectbox("Filter Kategori Barang", kategori_list)
+        # Filter & Download Bar
+        col_filter, col_dl_csv = st.columns([3, 1])
+        
+        with col_filter:
+            kategori_list = ["Semua"] + list(df_stok['kategori'].unique())
+            kat_pilihan = st.selectbox("Filter Kategori Barang", kategori_list)
         
         if kat_pilihan != "Semua":
-            df_display = df_stok[df_stok['kategori'] == kat_pilihan]
+            df_display = df_stok[df_stok['kategori'] == kat_pilihan].copy()
         else:
             df_display = df_stok.copy()
             
@@ -103,12 +104,60 @@ elif menu == "📊 Dashboard Data Stok":
                 
         df_display['Status'] = df_display.apply(status_stok, axis=1)
         
-        # Tampilkan Tabel Read-Only
+        # Tampilkan Tabel Read-Only Master Stok
         st.dataframe(
             df_display[['kode_barang', 'nama_barang', 'kategori', 'ukuran', 'harga', 'stok_sekarang', 'Status', 'deskripsi']],
             use_container_width=True,
             hide_index=True
         )
+        
+        # FITUR FITUR DOWNLOAD FILE STOK (CSV)
+        csv_data = df_display.to_csv(index=False).encode('utf-8')
+        with col_dl_csv:
+            st.write(" ") # Spacing
+            st.download_button(
+                label="📥 Unduh Data Stok (CSV)",
+                data=csv_data,
+                file_name="Laporan_Stok_Atribut_UBS_PPNI.csv",
+                mime="text/csv"
+            )
+
+        st.markdown("---")
+        
+        # BAGIAN BARU: RIWAYAT PENERIMAAN & PENYERAHAN (HISTORY)
+        st.subheader("📜 Riwayat Penerimaan & Penyerahan Barang")
+        
+        df_riwayat = db.get_riwayat_transaksi()
+        
+        if df_riwayat.empty:
+            st.info("Belum ada riwayat transaksi barang masuk/keluar.")
+        else:
+            # Reorder & Format Kolom Riwayat
+            df_riwayat_display = df_riwayat.rename(columns={
+                'tanggal': 'Waktu Transaksi',
+                'nama_barang': 'Nama Atribut',
+                'ukuran': 'Ukuran',
+                'tipe_transaksi': 'Jenis Mutasi',
+                'jumlah': 'Jumlah (Qty)',
+                'penerima_suplier': 'Pengirim / Penerima',
+                'keterangan': 'Keterangan'
+            })
+            
+            # Tampilkan Tabel Riwayat Transaksi
+            st.dataframe(
+                df_riwayat_display[['Waktu Transaksi', 'Nama Atribut', 'Ukuran', 'Jenis Mutasi', 'Jumlah (Qty)', 'Pengirim / Penerima', 'Keterangan']],
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # Tombol Download Riwayat Transaksi
+            csv_riwayat = df_riwayat_display.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Unduh Riwayat Transaksi (CSV)",
+                data=csv_riwayat,
+                file_name="Riwayat_Mutasi_Atribut_UBS_PPNI.csv",
+                mime="text/csv"
+            )
 
 # ==========================================
 # MENU 3: TAMBAH MASTER BARANG
